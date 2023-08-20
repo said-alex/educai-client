@@ -7,12 +7,6 @@
         </h1>
 
         <div class="main-page__search-input-wrapper">
-          <q-input size="md" v-model="search" type="search" placeholder="Pesquisar" outlined class="main-page__search-input--size">
-            <template v-slot:prepend>
-              <q-icon name="search" />
-            </template>
-          </q-input>
-
           <q-select outlined v-model="selectedFilter" :options="filterOptions" label="Filtros" class="main-page__search-input--size q-ml-md" />
         </div>
       </div>
@@ -21,29 +15,30 @@
 
       <div class="main-page__metrics-wrapper">
         <div class="main-page__dropout-risk-wrapper">
-          <div class="main-page__global-dropout-status">
+          <div :class="[
+            'main-page__global-dropout-status',
+            dropoutRiskWrapperBgColor
+          ]">
             <span class="main-page__dropout-risk-percentage">
-              87%
+              {{ formattedDropoutRiskPercentage }}
             </span>
 
             <span>
-              Sua universidade está saudável!
+              {{ dropoutRiskStatusMessage }}
             </span>
           </div>
 
           <div class="main-page__dropout-actionable-wrapper">
-            <span class="main-page__dropout-actionable-title">
-              Você tem 3.769 alunos com risco de evasão por desempenho
-            </span>
+            <h3 class="main-page__dropout-actionable-title">
+              Você tem {{ studentsCount }} alunos em risco de evasão por {{ formattedSelectedFilter }}
+            </h3>
 
             <span class="main-page__dropout-actionable-tip">
-              Você pode reverter até 43% desses alunos em risco de evasão através do nosso chatbot
+              Você pode reverter o risco de evasão através do nosso chatbot
             </span>
 
             <div class="main-page__dropout-actionable-actions">
               <q-btn color="primary" label="Reduzir risco" />
-
-              <q-btn outline color="primary" label="Acessar painel" class="q-ml-md" />
             </div>
           </div>
         </div>
@@ -59,7 +54,7 @@
             <div class="main-page__revenue-info q-ml-sm">
               <span>Receita mensal</span>
 
-              <span class="main-page__revenue-value">R$ 476.239,00</span>
+              <span class="main-page__revenue-value">{{ formattedMonthlyRevenueInRisk }}</span>
             </div>
           </div>
 
@@ -69,14 +64,8 @@
             <div class="main-page__revenue-info q-ml-sm">
               <span>Receita anual</span>
 
-              <span class="main-page__revenue-value">R$ 3.468.283,00</span>
+              <span class="main-page__revenue-value">{{ formattedYearlyRevenueInRisk }}</span>
             </div>
-          </div>
-
-          <div class="q-mt-md">
-            <q-btn color="primary" label="Reduzir risco" />
-
-            <q-btn outline color="primary" label="Acessar painel" class="q-ml-md" />
           </div>
         </div>
       </div>
@@ -85,11 +74,95 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 
-const search = ref('')
-const selectedFilter = ref('')
-const filterOptions = reactive([])
+type DropoutMetrics = {
+  dropoutRiskPercentage: number
+  monthlyRevenueInRisk: number
+  yearlyRevenueInRisk: number
+}
+
+type DropoutMetricsByCategory = {
+  count: number
+}
+
+const selectedFilter = ref('Desempenho')
+
+const filterOptions = [
+  'Desempenho',
+  'Inadimplência',
+  'Frequência',
+  'Renda',
+  'Baixo Engajamento ao AVA'
+]
+
+const filterOptionsCategoryMap: { [k: string]: string } = {
+  Desempenho: 'performance',
+  Inadimplência: 'payment_status',
+  Frequência: 'attendance',
+  Renda: 'income',
+  'Baixo Engajamento ao AVA': 'engagement'
+}
+
+const dropoutMetrics = ref<DropoutMetrics>({} as DropoutMetrics)
+const studentsCount = ref(0)
+
+const formattedDropoutRiskPercentage = computed(() =>
+  `${parseInt(dropoutMetrics.value.dropoutRiskPercentage?.toString())}%`
+)
+
+const discreteDropoutRiskPercentage = computed(() => {
+  const { dropoutRiskPercentage } = dropoutMetrics.value
+
+  if (dropoutRiskPercentage < 30) {
+    return 'low'
+  } else if (dropoutRiskPercentage >= 30 && dropoutRiskPercentage < 60) {
+    return 'medium'
+  } else {
+    return 'high'
+  }
+})
+const formattedSelectedFilter = computed(() => selectedFilter.value.toLowerCase())
+const formattedMonthlyRevenueInRisk = computed(() => formatCurrency(dropoutMetrics.value.monthlyRevenueInRisk))
+const formattedYearlyRevenueInRisk = computed(() => formatCurrency(dropoutMetrics.value.yearlyRevenueInRisk))
+const dropoutRiskWrapperBgColor = computed(() => {
+  if (discreteDropoutRiskPercentage.value === 'low') {
+    return 'bg-green-5'
+  } else if (discreteDropoutRiskPercentage.value === 'medium') {
+    return 'bg-yellow-5'
+  } else {
+    return 'bg-red-5'
+  }
+})
+const dropoutRiskStatusMessage = computed(() => {
+  if (discreteDropoutRiskPercentage.value === 'low') {
+    return 'Sua universidade está saudável!'
+  } else if (discreteDropoutRiskPercentage.value === 'medium') {
+    return 'Sua universidade está em risco!'
+  } else {
+    return 'Sua universidade está em risco crítico!'
+  }
+})
+const formatCurrency = (value: number) => value?.toLocaleString('pt-br', { style: 'currency', currency: 'BRL' })
+
+const fetchDropoutMetrics = async () => await fetch('http://localhost:8000/students/dropout_metrics')
+  .then(response => response.json())
+  .then((data: DropoutMetrics) => { dropoutMetrics.value = data })
+
+const fetchDropoutMetricsByCategory = async (category: string) =>
+  await fetch(`http://localhost:8000/students/${filterOptionsCategoryMap[category]}`)
+    .then(response => response.json())
+    .then((data: DropoutMetricsByCategory) => { studentsCount.value = data.count })
+    .catch(() => { studentsCount.value = 0 })
+
+watch(selectedFilter, async () => {
+  await fetchDropoutMetricsByCategory(selectedFilter.value)
+})
+
+onMounted(async () => {
+  await fetchDropoutMetrics()
+  await fetchDropoutMetricsByCategory(selectedFilter.value)
+})
 </script>
 
 <style lang="scss" scoped>
@@ -125,7 +198,7 @@ const filterOptions = reactive([])
 }
 
 .main-page__search-input--size {
-  width: 170px;
+  width: 240px;
 }
 
 .main-page__metrics-wrapper {
